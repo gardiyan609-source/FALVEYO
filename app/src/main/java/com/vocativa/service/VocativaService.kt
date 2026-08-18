@@ -47,10 +47,6 @@ class VocativaService : Service() {
     // Edge scroll scroller
     private var edgeScroller: SmoothScrollController? = null
 
-    // Ardışık hızlı basmaları (debounce) önlemek için zaman damgaları
-    private val lastCommandTimestamps: MutableMap<String, Long> = mutableMapOf()
-    private var minCommandIntervalMs: Long = 200L // 200ms içinde gelen aynı komutu yoksay
-
     override fun onCreate() {
         super.onCreate()
         instance = this
@@ -133,23 +129,8 @@ class VocativaService : Service() {
     // KOMUT İŞLE
     // ----------------------------------------------------------------
 
-    private fun shouldHandleCommand(command: String): Boolean {
-        // TOUCH_MOVE / TOUCH_DOWN / TOUCH_UP genelde sürekli gelmesi gereken eventlerdir, bunları debounce etmiyoruz
-        if (command == "TOUCH_MOVE" || command == "TOUCH_DOWN" || command == "TOUCH_UP") return true
-
-        val now = System.currentTimeMillis()
-        val last = lastCommandTimestamps[command] ?: 0L
-        if (now - last < minCommandIntervalMs) {
-            Log.d(TAG, "Komut atlandı (çok hızlı tekrar): $command")
-            return false
-        }
-        lastCommandTimestamps[command] = now
-        return true
-    }
-
     private fun handleCommand(command: String) {
-        if (!shouldHandleCommand(command)) return
-
+        // Debounce / ardışık engelleme kaldırıldı: kullanıcı istediği kadar hızlı basabilir
         val pos = GlobalCursorState.position.value
         when (command) {
             "SELECT"     -> InputExecutor.tap(pos.x, pos.y)
