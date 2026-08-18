@@ -1,4 +1,4 @@
-package com.vocativa.service
+package com.falveyo.service
 
 import android.bluetooth.BluetoothDevice
 import android.graphics.PointF
@@ -6,17 +6,25 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
+enum class EdgeScrollDirection(val title: String) {
+    NONE("Boşta"),
+    BOTTOM("Aşağı Kaydırma"),
+    TOP("Yukarı Kaydırma"),
+    LEFT("Sola Kaydırma"),
+    RIGHT("Sağa Kaydırma")
+}
+
 data class ScannedBleDevice(
     val name: String,
     val address: String,
     val rssi: Int,
     val device: BluetoothDevice,
-    val isVocativaOrEsp: Boolean = false
+    val isFalveyoOrEsp: Boolean = false
 )
 
 object GlobalCursorState {
 
-    private val _position = MutableStateFlow(PointF(0f, 0f))
+    private val _position = MutableStateFlow(PointF(540f, 960f))
     val position: StateFlow<PointF> = _position.asStateFlow()
 
     private val _connected = MutableStateFlow(false)
@@ -46,8 +54,37 @@ object GlobalCursorState {
     private val _statusLog = MutableStateFlow("Hazır. Cihaz taraması başlatabilirsiniz.")
     val statusLog: StateFlow<String> = _statusLog.asStateFlow()
 
+    private val _edgeScrollingDirection = MutableStateFlow(EdgeScrollDirection.NONE)
+    val edgeScrollingDirection: StateFlow<EdgeScrollDirection> = _edgeScrollingDirection.asStateFlow()
+
+    private val _joystickVector = MutableStateFlow(PointF(0f, 0f))
+    val joystickVector: StateFlow<PointF> = _joystickVector.asStateFlow()
+
+    private val _isSelecting = MutableStateFlow(false)
+    val isSelecting: StateFlow<Boolean> = _isSelecting.asStateFlow()
+
+    private val _selectionStart = MutableStateFlow<PointF?>(null)
+    val selectionStart: StateFlow<PointF?> = _selectionStart.asStateFlow()
+
     fun updatePosition(x: Float, y: Float) {
         _position.value = PointF(x, y)
+    }
+
+    fun setSelecting(selecting: Boolean, startX: Float = 0f, startY: Float = 0f) {
+        _isSelecting.value = selecting
+        if (selecting) {
+            _selectionStart.value = PointF(startX, startY)
+        } else {
+            _selectionStart.value = null
+        }
+    }
+
+    fun updateJoystickVector(vx: Float, vy: Float) {
+        _joystickVector.value = PointF(vx, vy)
+    }
+
+    fun setEdgeScrollingDirection(dir: EdgeScrollDirection) {
+        _edgeScrollingDirection.value = dir
     }
 
     fun setConnected(value: Boolean, deviceName: String? = null, deviceAddress: String? = null) {
@@ -86,7 +123,8 @@ object GlobalCursorState {
             ?: (try { device.name } catch (_: SecurityException) { null })?.takeIf { it.isNotBlank() }
             ?: "Bilinmeyen Cihaz (${device.address.takeLast(5)})"
 
-        val isVocativaOrEsp = name.contains("vocativa", ignoreCase = true) ||
+        val isFalveyoOrEsp = name.contains("falveyo", ignoreCase = true) ||
+                name.contains("vocativa", ignoreCase = true) ||
                 name.contains("esp32", ignoreCase = true) ||
                 name.contains("esp", ignoreCase = true) ||
                 name.contains("cursor", ignoreCase = true) ||
@@ -98,7 +136,7 @@ object GlobalCursorState {
             address = device.address,
             rssi = rssi,
             device = device,
-            isVocativaOrEsp = isVocativaOrEsp
+            isFalveyoOrEsp = isFalveyoOrEsp
         )
 
         if (existingIndex >= 0) {
@@ -107,9 +145,9 @@ object GlobalCursorState {
             currentList.add(item)
         }
 
-        // Sort Vocativa/ESP32 devices on top, then by strongest RSSI
+        // Sort Falveyo/ESP32 devices on top, then by strongest RSSI
         currentList.sortWith(
-            compareByDescending<ScannedBleDevice> { it.isVocativaOrEsp }
+            compareByDescending<ScannedBleDevice> { it.isFalveyoOrEsp }
                 .thenByDescending { it.rssi }
         )
 

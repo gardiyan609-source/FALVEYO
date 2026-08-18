@@ -1,4 +1,4 @@
-package com.vocativa.service
+package com.falveyo.service
 
 import android.Manifest
 import android.content.Context
@@ -14,6 +14,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -33,6 +34,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -40,6 +42,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
@@ -49,32 +54,28 @@ class MainActivity : ComponentActivity() {
 
         AppSettings.init(this)
 
-        // Root izin testi
-        Thread {
-            try {
-                Runtime.getRuntime().exec(arrayOf("su", "-c", "echo ok"))
-            } catch (_: Exception) {}
-        }.start()
+        // Kalıcı root oturumunu uygulama ilk açıldığında tek seferde başlat
+        InputExecutor.init()
 
         setContent {
-            VocativaApp(
-                onStartService = { startVocativaService() },
-                onStopService = { stopVocativaService() },
+            FalveyoApp(
+                onStartService = { startFalveyoService() },
+                onStopService = { stopFalveyoService() },
                 onScanToggle = { shouldScan ->
                     if (shouldScan) {
                         ensureServiceStarted()
-                        VocativaService.instance?.bleManager?.startScan()
+                        FalveyoService.instance?.bleManager?.startScan()
                             ?: GlobalCursorState.setStatusLog("Servis başlatılıyor, lütfen tekrar deneyin...")
                     } else {
-                        VocativaService.instance?.bleManager?.stopScan()
+                        FalveyoService.instance?.bleManager?.stopScan()
                     }
                 },
                 onConnectDevice = { deviceItem ->
                     ensureServiceStarted()
-                    VocativaService.instance?.bleManager?.connect(deviceItem.device)
+                    FalveyoService.instance?.bleManager?.connect(deviceItem.device)
                 },
                 onDisconnect = {
-                    VocativaService.instance?.bleManager?.disconnect()
+                    FalveyoService.instance?.bleManager?.disconnect()
                 },
                 onRequestOverlay = {
                     if (!Settings.canDrawOverlays(this)) {
@@ -91,14 +92,14 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun ensureServiceStarted() {
-        if (VocativaService.instance == null) {
-            startVocativaService()
+        if (FalveyoService.instance == null) {
+            startFalveyoService()
         }
     }
 
-    private fun startVocativaService() {
-        val serviceIntent = Intent(this, VocativaService::class.java).apply {
-            action = VocativaService.ACTION_START
+    private fun startFalveyoService() {
+        val serviceIntent = Intent(this, FalveyoService::class.java).apply {
+            action = FalveyoService.ACTION_START
         }
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -111,10 +112,10 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun stopVocativaService() {
-        VocativaService.instance?.stopServiceInternal() ?: run {
-            val stopIntent = Intent(this, VocativaService::class.java).apply {
-                action = VocativaService.ACTION_STOP
+    private fun stopFalveyoService() {
+        FalveyoService.instance?.stopServiceInternal() ?: run {
+            val stopIntent = Intent(this, FalveyoService::class.java).apply {
+                action = FalveyoService.ACTION_STOP
             }
             stopService(stopIntent)
             GlobalCursorState.setServiceRunning(false)
@@ -126,7 +127,7 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun VocativaApp(
+fun FalveyoApp(
     onStartService: () -> Unit,
     onStopService: () -> Unit,
     onScanToggle: (Boolean) -> Unit,
@@ -147,6 +148,7 @@ fun VocativaApp(
     val isServiceRunning by GlobalCursorState.serviceRunning.collectAsState()
     val lastCommand by GlobalCursorState.lastCommand.collectAsState()
     val statusLog by GlobalCursorState.statusLog.collectAsState()
+    val edgeScrollingDirection by GlobalCursorState.edgeScrollingDirection.collectAsState()
 
     var hasOverlayPermission by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
 
@@ -203,19 +205,27 @@ fun VocativaApp(
                     TopAppBar(
                         title = {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
+                                Image(
+                                    painter = painterResource(id = R.drawable.falveyo_logo),
+                                    contentDescription = "FALVEYO Logo",
                                     modifier = Modifier
-                                        .size(10.dp)
-                                        .clip(CircleShape)
-                                        .background(if (isConnected) Color(0xFF00E676) else if (isServiceRunning) Color(0xFFFFB300) else Color(0xFFFF5252))
+                                        .size(28.dp)
+                                        .clip(RoundedCornerShape(6.dp))
                                 )
                                 Spacer(Modifier.width(10.dp))
                                 Text(
-                                    "VOCATIVA",
-                                    fontWeight = FontWeight.Bold,
+                                    "FALVEYO",
+                                    fontWeight = FontWeight.ExtraBold,
                                     letterSpacing = 2.sp,
-                                    fontSize = 20.sp,
+                                    fontSize = 19.sp,
                                     color = Color.White
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .clip(CircleShape)
+                                        .background(if (isConnected) Color(0xFF00E676) else if (isServiceRunning) Color(0xFFFFB300) else Color(0xFFFF5252))
                                 )
                             }
                         },
@@ -306,6 +316,8 @@ fun VocativaApp(
                         }
                     }
 
+
+
                     item {
                         StatusDashboardCard(
                             isConnected = isConnected,
@@ -315,6 +327,7 @@ fun VocativaApp(
                             touching = touching,
                             lastCommand = lastCommand,
                             statusLog = statusLog,
+                            edgeScrollingDirection = edgeScrollingDirection,
                             onDisconnect = onDisconnect
                         )
                     }
@@ -424,6 +437,10 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
     val touchMethod by AppSettings.touchMethod.collectAsState()
     val cursorRadius by AppSettings.cursorRadius.collectAsState()
     val cursorColor by AppSettings.cursorColor.collectAsState()
+    val edgeScrollEnabled by AppSettings.edgeScrollEnabled.collectAsState()
+    val edgeScrollDelayMs by AppSettings.edgeScrollDelayMs.collectAsState()
+    val edgeScrollSpeed by AppSettings.edgeScrollSpeed.collectAsState()
+    val edgeScrollMargin by AppSettings.edgeScrollMargin.collectAsState()
 
     val colorsList = listOf(
         0xFF00E5FF.toInt(), // Neon Camgöbeği
@@ -796,7 +813,89 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
             }
         }
 
-        // 6. SIFIRLA BUTONU
+        // 6. KENAR KAYDIRMA (Joystick İtme / Basınç Bazlı - Proportional Edge Scroll)
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF161824)),
+                shape = RoundedCornerShape(14.dp),
+                border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(Color(0xFF262B3F)))
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.Menu, contentDescription = null, tint = Color(0xFF00E5FF))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Kenar Kaydırma (Joystick İtme)", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 16.sp)
+                        Spacer(Modifier.weight(1f))
+                        Switch(
+                            checked = edgeScrollEnabled,
+                            onCheckedChange = { AppSettings.setEdgeScrollEnabled(it) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color(0xFF00E5FF),
+                                checkedTrackColor = Color(0x5500E5FF),
+                                uncheckedThumbColor = Color(0xFF8E95B3),
+                                uncheckedTrackColor = Color(0xFF2C3247)
+                            )
+                        )
+                    }
+
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "İmleç ekran kenarındayken joystick ile o yöne ittiğiniz oranda hızlı veya yavaş kaydırılır. Joystick'i bıraktığınızda durur, kendi kendine otomatik kaydırmaz.",
+                        fontSize = 12.sp,
+                        color = Color(0xFF8E95B3)
+                    )
+
+                    if (edgeScrollEnabled) {
+                        Spacer(Modifier.height(14.dp))
+                        Divider(color = Color(0xFF262B3F))
+                        Spacer(Modifier.height(14.dp))
+
+                        // Kaydırma Hızı Çarpanı
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Kaydırma Hız Çarpanı", fontWeight = FontWeight.Medium, color = Color.White, fontSize = 14.sp)
+                            Spacer(Modifier.weight(1f))
+                            Text(String.format("%.1fx", edgeScrollSpeed), color = Color(0xFF00E5FF), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+                        Slider(
+                            value = edgeScrollSpeed,
+                            onValueChange = { AppSettings.setEdgeScrollSpeed(it) },
+                            valueRange = 0.5f..2.5f,
+                            steps = 19,
+                            colors = SliderDefaults.colors(
+                                thumbColor = Color(0xFF00E5FF),
+                                activeTrackColor = Color(0xFF00E5FF),
+                                inactiveTrackColor = Color(0xFF2C3247)
+                            )
+                        )
+
+                        Spacer(Modifier.height(10.dp))
+
+                        // Kenar Algılama Mesafesi
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Kenar Algılama Alanı", fontWeight = FontWeight.Medium, color = Color.White, fontSize = 14.sp)
+                            Spacer(Modifier.weight(1f))
+                            Text("${edgeScrollMargin.toInt()} px", color = Color(0xFF00E5FF), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+                        Slider(
+                            value = edgeScrollMargin,
+                            onValueChange = { AppSettings.setEdgeScrollMargin(it) },
+                            valueRange = 20f..90f,
+                            steps = 13,
+                            colors = SliderDefaults.colors(
+                                thumbColor = Color(0xFF00E5FF),
+                                activeTrackColor = Color(0xFF00E5FF),
+                                inactiveTrackColor = Color(0xFF2C3247)
+                            )
+                        )
+                    }
+                }
+            }
+        }
+
+        // 7. SIFIRLA BUTONU
         item {
             OutlinedButton(
                 onClick = { AppSettings.resetToDefaults() },
@@ -848,7 +947,7 @@ fun TextSelectionTestCard() {
             ) {
                 SelectionContainer {
                     Text(
-                        text = "Vocativa ESP32 BLE joystick kontrolü ile bu metni basılı tutarak kolayca seçebilir, kopyalayabilir ve Android üzerinde tam fare/dokunma deneyimi yaşayabilirsiniz.",
+                        text = "FALVEYO ESP32 BLE joystick kontrolü ile bu metni basılı tutarak kolayca seçebilir, kopyalayabilir ve Android üzerinde tam fare/dokunma deneyimi yaşayabilirsiniz.",
                         fontSize = 13.sp,
                         color = Color(0xFFE2E8F0),
                         modifier = Modifier.padding(12.dp),
@@ -921,6 +1020,7 @@ fun StatusDashboardCard(
     touching: Boolean,
     lastCommand: String?,
     statusLog: String,
+    edgeScrollingDirection: EdgeScrollDirection = EdgeScrollDirection.NONE,
     onDisconnect: () -> Unit
 ) {
     Card(
@@ -978,6 +1078,34 @@ fun StatusDashboardCard(
                 )
             }
 
+            if (edgeScrollingDirection != EdgeScrollDirection.NONE) {
+                Spacer(Modifier.height(8.dp))
+                Surface(
+                    color = Color(0x3300E5FF),
+                    shape = RoundedCornerShape(6.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x6600E5FF))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            tint = Color(0xFF00E5FF),
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "Kenar Otomatik Kaydırma Aktif: ${edgeScrollingDirection.title}",
+                            color = Color(0xFF00E5FF),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
             Spacer(Modifier.height(12.dp))
             Divider(color = Color(0x33FFFFFF))
             Spacer(Modifier.height(12.dp))
@@ -1000,11 +1128,11 @@ fun StatusDashboardCard(
                 Column(horizontalAlignment = Alignment.End) {
                     Text("DOKUNMA / KOMUT", fontSize = 10.sp, color = Color(0xFF8C93B0), fontWeight = FontWeight.SemiBold)
                     Text(
-                        text = if (touching) "BASILI (Metin Seçimi/Sürükleme)" else (lastCommand ?: "Boşta"),
+                        text = if (edgeScrollingDirection != EdgeScrollDirection.NONE) "KENAR KAYDIRILIYOR" else if (touching) "BASILI (Metin Seçimi/Sürükleme)" else (lastCommand ?: "Boşta"),
                         fontFamily = FontFamily.Monospace,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium,
-                        color = if (touching) Color(0xFF00E5FF) else Color(0xFFE0E0E0)
+                        color = if (edgeScrollingDirection != EdgeScrollDirection.NONE || touching) Color(0xFF00E5FF) else Color(0xFFE0E0E0)
                     )
                 }
             }
@@ -1056,7 +1184,7 @@ fun EmptyDevicesCard() {
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                "Vocativa ESP32 cihazınızı açın ve 'Cihazları Tara' butonuna basın.",
+                "FALVEYO veya ESP32 cihazınızı açın ve 'Cihazları Tara' butonuna basın.",
                 fontSize = 12.sp,
                 color = Color(0xFF555B77),
                 textAlign = TextAlign.Center
@@ -1076,12 +1204,12 @@ fun DeviceListItemCard(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (isConnected) Color(0xFF152A22) else if (item.isVocativaOrEsp) Color(0xFF1E2336) else Color(0xFF161824)
+            containerColor = if (isConnected) Color(0xFF152A22) else if (item.isFalveyoOrEsp) Color(0xFF1E2336) else Color(0xFF161824)
         ),
         border = CardDefaults.outlinedCardBorder().copy(
             brush = androidx.compose.ui.graphics.SolidColor(
                 if (isConnected) Color(0xFF00E676)
-                else if (item.isVocativaOrEsp) Color(0xFF7C4DFF)
+                else if (item.isFalveyoOrEsp) Color(0xFF7C4DFF)
                 else Color(0xFF262B3F)
             )
         )
@@ -1101,11 +1229,11 @@ fun DeviceListItemCard(
                     modifier = Modifier
                         .size(40.dp)
                         .clip(CircleShape)
-                        .background(if (item.isVocativaOrEsp) Color(0xFF7C4DFF) else Color(0xFF262A3C)),
+                        .background(if (item.isFalveyoOrEsp) Color(0xFF7C4DFF) else Color(0xFF262A3C)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = if (item.isVocativaOrEsp) Icons.Default.Star else Icons.Default.Place,
+                        imageVector = if (item.isFalveyoOrEsp) Icons.Default.Star else Icons.Default.Place,
                         contentDescription = null,
                         tint = Color.White,
                         modifier = Modifier.size(20.dp)
@@ -1124,7 +1252,7 @@ fun DeviceListItemCard(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        if (item.isVocativaOrEsp) {
+                        if (item.isFalveyoOrEsp) {
                             Spacer(Modifier.width(6.dp))
                             Surface(
                                 color = Color(0x337C4DFF),
@@ -1173,8 +1301,8 @@ fun DeviceListItemCard(
                 Button(
                     onClick = onConnect,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = if (item.isVocativaOrEsp) Color(0xFF00E5FF) else Color(0xFF2C3247),
-                        contentColor = if (item.isVocativaOrEsp) Color.Black else Color.White
+                        containerColor = if (item.isFalveyoOrEsp) Color(0xFF00E5FF) else Color(0xFF2C3247),
+                        contentColor = if (item.isFalveyoOrEsp) Color.Black else Color.White
                     ),
                     shape = RoundedCornerShape(8.dp),
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)

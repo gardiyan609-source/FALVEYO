@@ -15,7 +15,7 @@
 
     <application
         android:allowBackup="true"
-        android:label="Vocativa"
+        android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@style/AppTheme"
@@ -32,7 +32,7 @@
 
         <!-- configChanges: rotation değişince servis restart olmaz, onConfigurationChanged çağrılır -->
         <service
-            android:name=".VocativaService"
+            android:name=".FalveyoService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice"
             android:configChanges="orientation|screenSize|screenLayout" />

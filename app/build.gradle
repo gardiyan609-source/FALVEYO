@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace 'com.vocativa.service'
+    namespace 'com.falveyo.service'
     compileSdk 34
 
     defaultConfig {
-        applicationId "com.vocativa.service"
+        applicationId "com.falveyo.service"
         minSdk 26
         targetSdk 34
         versionCode 1

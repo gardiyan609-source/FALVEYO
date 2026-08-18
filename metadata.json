@@ -1,6 +1,6 @@
 {
-  "name": "Vocativa",
-  "description": "BLE and cursor service app for controlling Android via ESP32 joystick and buttons",
+  "name": "FALVEYO",
+  "description": "FALVEYO BLE and cursor service app for controlling Android via ESP32 joystick and buttons",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

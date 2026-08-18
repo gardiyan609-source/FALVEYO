@@ -1,4 +1,4 @@
-package com.vocativa.service
+package com.falveyo.service
 
 import android.content.Context
 import android.content.SharedPreferences
@@ -8,13 +8,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 enum class TouchInputMethod(val title: String, val description: String) {
-    MOTION_EVENT("Modern Motionevent (Önerilen)", "Android 12+ standart input motionevent API'si, metin seçme ve sürüklemede en kararlıdır."),
-    SEND_EVENT("Otomatik Algılanan sendevent", "Cihazın dokunmatik ekran donanımını otomatik bularak doğrudan Linux event gönderir."),
-    SWIPE_HYBRID("Swipe & Tap Hibrit", "Android input swipe/tap komutları ile uyumlu mod.")
+    SEND_EVENT("Ultra Düşük Gecikmeli Sendevent (Önerilen)", "Linux çekirdeğine doğrudan donanım sinyali gönderir. Tuş ve dokunma gecikmesini sıfıra indirir."),
+    MOTION_EVENT("Modern Motionevent API", "Android motionevent komutları üzerinden çalışır."),
+    SWIPE_HYBRID("Swipe & Tap Hibrit", "Android standart input araçları ile çalışır.")
 }
 
 object AppSettings {
-    private const val PREFS_NAME = "vocativa_settings"
+    private const val PREFS_NAME = "falveyo_settings"
 
     private const val KEY_CURSOR_SPEED = "cursor_speed"
     private const val KEY_FINE_SENSITIVITY = "fine_sensitivity"
@@ -26,6 +26,10 @@ object AppSettings {
     private const val KEY_CURSOR_RADIUS = "cursor_radius"
     private const val KEY_CURSOR_COLOR = "cursor_color"
     private const val KEY_HAPTIC_ENABLED = "haptic_enabled"
+    private const val KEY_EDGE_SCROLL_ENABLED = "edge_scroll_enabled"
+    private const val KEY_EDGE_SCROLL_DELAY_MS = "edge_scroll_delay_ms"
+    private const val KEY_EDGE_SCROLL_SPEED = "edge_scroll_speed"
+    private const val KEY_EDGE_SCROLL_MARGIN = "edge_scroll_margin"
 
     // Varsayılan Değerler
     const val DEFAULT_SPEED = 15f
@@ -33,9 +37,14 @@ object AppSettings {
     const val DEFAULT_DEADZONE = 0.03f // %3 ölü bölge (mikro hareketleri kaçırmaz)
     const val DEFAULT_SMOOTHING_ENABLED = true
     const val DEFAULT_SMOOTHING_FACTOR = 0.45f // Düşük geçiren filtre katsayısı
-    const val DEFAULT_LONG_PRESS_MS = 400L
+    const val DEFAULT_LONG_PRESS_MS = 1500L // 1.5 saniye (Metin / Alan seçimi ve uzun basış bekleme süresi)
     const val DEFAULT_CURSOR_RADIUS = 18f
     const val DEFAULT_CURSOR_COLOR = 0xFF00E5FF.toInt()
+
+    const val DEFAULT_EDGE_SCROLL_ENABLED = false
+    const val DEFAULT_EDGE_SCROLL_DELAY_MS = 600L
+    const val DEFAULT_EDGE_SCROLL_SPEED = 1.0f
+    const val DEFAULT_EDGE_SCROLL_MARGIN = 40f // px
 
     private var prefs: SharedPreferences? = null
 
@@ -57,7 +66,7 @@ object AppSettings {
     private val _longPressMs = MutableStateFlow(DEFAULT_LONG_PRESS_MS)
     val longPressMs: StateFlow<Long> = _longPressMs.asStateFlow()
 
-    private val _touchMethod = MutableStateFlow(TouchInputMethod.MOTION_EVENT)
+    private val _touchMethod = MutableStateFlow(TouchInputMethod.SEND_EVENT)
     val touchMethod: StateFlow<TouchInputMethod> = _touchMethod.asStateFlow()
 
     private val _cursorRadius = MutableStateFlow(DEFAULT_CURSOR_RADIUS)
@@ -68,6 +77,18 @@ object AppSettings {
 
     private val _hapticEnabled = MutableStateFlow(true)
     val hapticEnabled: StateFlow<Boolean> = _hapticEnabled.asStateFlow()
+
+    private val _edgeScrollEnabled = MutableStateFlow(DEFAULT_EDGE_SCROLL_ENABLED)
+    val edgeScrollEnabled: StateFlow<Boolean> = _edgeScrollEnabled.asStateFlow()
+
+    private val _edgeScrollDelayMs = MutableStateFlow(DEFAULT_EDGE_SCROLL_DELAY_MS)
+    val edgeScrollDelayMs: StateFlow<Long> = _edgeScrollDelayMs.asStateFlow()
+
+    private val _edgeScrollSpeed = MutableStateFlow(DEFAULT_EDGE_SCROLL_SPEED)
+    val edgeScrollSpeed: StateFlow<Float> = _edgeScrollSpeed.asStateFlow()
+
+    private val _edgeScrollMargin = MutableStateFlow(DEFAULT_EDGE_SCROLL_MARGIN)
+    val edgeScrollMargin: StateFlow<Float> = _edgeScrollMargin.asStateFlow()
 
     fun init(context: Context) {
         if (prefs == null) {
@@ -84,15 +105,19 @@ object AppSettings {
         _smoothingEnabled.value = p.getBoolean(KEY_SMOOTHING_ENABLED, DEFAULT_SMOOTHING_ENABLED)
         _smoothingFactor.value = p.getFloat(KEY_SMOOTHING_FACTOR, DEFAULT_SMOOTHING_FACTOR)
         _longPressMs.value = p.getLong(KEY_LONG_PRESS_MS, DEFAULT_LONG_PRESS_MS)
-        val methodStr = p.getString(KEY_TOUCH_METHOD, TouchInputMethod.MOTION_EVENT.name)
+        val methodStr = p.getString(KEY_TOUCH_METHOD, TouchInputMethod.SEND_EVENT.name)
         _touchMethod.value = try {
-            TouchInputMethod.valueOf(methodStr ?: TouchInputMethod.MOTION_EVENT.name)
+            TouchInputMethod.valueOf(methodStr ?: TouchInputMethod.SEND_EVENT.name)
         } catch (_: Exception) {
-            TouchInputMethod.MOTION_EVENT
+            TouchInputMethod.SEND_EVENT
         }
         _cursorRadius.value = p.getFloat(KEY_CURSOR_RADIUS, DEFAULT_CURSOR_RADIUS)
         _cursorColor.value = p.getInt(KEY_CURSOR_COLOR, DEFAULT_CURSOR_COLOR)
         _hapticEnabled.value = p.getBoolean(KEY_HAPTIC_ENABLED, true)
+        _edgeScrollEnabled.value = p.getBoolean(KEY_EDGE_SCROLL_ENABLED, DEFAULT_EDGE_SCROLL_ENABLED)
+        _edgeScrollDelayMs.value = p.getLong(KEY_EDGE_SCROLL_DELAY_MS, DEFAULT_EDGE_SCROLL_DELAY_MS)
+        _edgeScrollSpeed.value = p.getFloat(KEY_EDGE_SCROLL_SPEED, DEFAULT_EDGE_SCROLL_SPEED)
+        _edgeScrollMargin.value = p.getFloat(KEY_EDGE_SCROLL_MARGIN, DEFAULT_EDGE_SCROLL_MARGIN)
     }
 
     fun setCursorSpeed(speed: Float) {
@@ -145,6 +170,30 @@ object AppSettings {
         prefs?.edit()?.putBoolean(KEY_HAPTIC_ENABLED, enabled)?.apply()
     }
 
+    fun setEdgeScrollEnabled(enabled: Boolean) {
+        _edgeScrollEnabled.value = enabled
+        prefs?.edit()?.putBoolean(KEY_EDGE_SCROLL_ENABLED, enabled)?.apply()
+        if (!enabled) {
+            GlobalCursorState.setEdgeScrollingDirection(EdgeScrollDirection.NONE)
+            FalveyoService.instance?.stopEdgeScroll()
+        }
+    }
+
+    fun setEdgeScrollDelayMs(ms: Long) {
+        _edgeScrollDelayMs.value = ms
+        prefs?.edit()?.putLong(KEY_EDGE_SCROLL_DELAY_MS, ms)?.apply()
+    }
+
+    fun setEdgeScrollSpeed(speed: Float) {
+        _edgeScrollSpeed.value = speed
+        prefs?.edit()?.putFloat(KEY_EDGE_SCROLL_SPEED, speed)?.apply()
+    }
+
+    fun setEdgeScrollMargin(marginPx: Float) {
+        _edgeScrollMargin.value = marginPx
+        prefs?.edit()?.putFloat(KEY_EDGE_SCROLL_MARGIN, marginPx)?.apply()
+    }
+
     fun resetToDefaults() {
         setCursorSpeed(DEFAULT_SPEED)
         setFineSensitivity(DEFAULT_SENSITIVITY)
@@ -152,9 +201,13 @@ object AppSettings {
         setSmoothingEnabled(DEFAULT_SMOOTHING_ENABLED)
         setSmoothingFactor(DEFAULT_SMOOTHING_FACTOR)
         setLongPressMs(DEFAULT_LONG_PRESS_MS)
-        setTouchMethod(TouchInputMethod.MOTION_EVENT)
+        setTouchMethod(TouchInputMethod.SEND_EVENT)
         setCursorRadius(DEFAULT_CURSOR_RADIUS)
         setCursorColor(DEFAULT_CURSOR_COLOR)
         setHapticEnabled(true)
+        setEdgeScrollEnabled(DEFAULT_EDGE_SCROLL_ENABLED)
+        setEdgeScrollDelayMs(DEFAULT_EDGE_SCROLL_DELAY_MS)
+        setEdgeScrollSpeed(DEFAULT_EDGE_SCROLL_SPEED)
+        setEdgeScrollMargin(DEFAULT_EDGE_SCROLL_MARGIN)
     }
 }
