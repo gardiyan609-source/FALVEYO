@@ -12,6 +12,8 @@ import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
 import kotlin.math.hypot
+import kotlin.math.abs
+import kotlin.math.pow
 
 private const val TAG = "VocativaService"
 private const val CHANNEL_ID = "vocativa_channel"
@@ -41,6 +43,9 @@ class VocativaService : Service() {
     private var isTouchDown = false
     private var touchStartX = 0f
     private var touchStartY = 0f
+
+    // Edge scroll scroller
+    private var edgeScroller: SmoothScrollController? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -74,6 +79,13 @@ class VocativaService : Service() {
             onCommand = { command -> handleCommand(command) }
         )
 
+        // --- Yeni: Edge scroll entegrasyonu ---
+        try {
+            setupEdgeScroll(w, h)
+        } catch (e: Exception) {
+            Log.w(TAG, "Edge scroll setup hatası: ${e.message}")
+        }
+
         serviceScope.launch {
             GlobalCursorState.connected.collectLatest { isConnected ->
                 val text = if (isConnected)
@@ -95,6 +107,11 @@ class VocativaService : Service() {
         val (w, h) = getScreenSize()
         Log.d(TAG, "Rotation değişti, yeni ekran: ${w}x${h}")
         bleManager?.updateScreenSize(w, h)
+        // ekran boyutu değişince scroller'ı da güncelle
+        try {
+            edgeScroller?.stop()
+            setupEdgeScroll(w, h)
+        } catch (_: Exception) {}
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -140,6 +157,10 @@ class VocativaService : Service() {
         InputExecutor.touchDown(pos.x, pos.y)
         GlobalCursorState.setTouching(true)
         Log.d(TAG, "TOUCH DOWN @ ${pos.x.toInt()},${pos.y.toInt()}")
+
+        // dokunma başladığında edge scroll'u durdur
+        edgeScroller?.velocityX = 0f
+        edgeScroller?.velocityY = 0f
     }
 
     fun onJoystickMove() {
@@ -169,6 +190,75 @@ class VocativaService : Service() {
 
         isTouchDown = false
         GlobalCursorState.setTouching(false)
+    }
+
+    // ----------------------------------------------------------------
+    // EDGE SCROLL SETUP
+    // ----------------------------------------------------------------
+
+    private fun setupEdgeScroll(screenW: Int, screenH: Int) {
+        // scrollAction: her frame gelen dx,dy -> InputExecutor ile kısa swipe at
+        val scroller = SmoothScrollController({ dx, dy ->
+            // dy: px to move this frame. Kullanıcı pozisyonuna göre küçük swipe yap
+            val pos = GlobalCursorState.position.value
+            // eğer dy 0 ise atlama
+            if (dy == 0) return@SmoothScrollController
+            try {
+                // Küçük adımlarla hızlı süregelen swipe'lar yapmak, duration kısa olmalı
+                val duration = 30
+                InputExecutor.swipe(pos.x, pos.y, pos.x, pos.y + dy.toFloat(), duration)
+            } catch (t: Throwable) {
+                Log.w(TAG, "Edge scroll exec hatası: ${t.message}")
+            }
+        })
+
+        scroller.dampingPerFrame = 0.985f
+        scroller.stopThresholdPxPerSec = 6f
+        scroller.startIfNeeded()
+        edgeScroller = scroller
+
+        // Parametreler - isteğe göre AppSettings'ten çekebilirsiniz
+        val maxSpeedPxPerSec = 2800f
+        val exponent = 1.6f
+        val deadzonePx = 18
+
+        // Pozisyon akışını dinle ve hedef hızı güncelle
+        serviceScope.launch {
+            GlobalCursorState.position.collectLatest { point ->
+                // Eğer kullanıcı dokunuyorsa edge-scroll ile çakışmasını önle
+                if (GlobalCursorState.touching.value) {
+                    scroller.velocityX = 0f
+                    scroller.velocityY = 0f
+                    return@collectLatest
+                }
+
+                val nx = JoystickEdgeMath.normalizedEdgeFraction(point.x, screenW, deadzonePx)
+                val ny = JoystickEdgeMath.normalizedEdgeFraction(point.y, screenH, deadzonePx)
+
+                val speedX = if (nx == 0f) 0f else (if (nx >= 0) 1f else -1f) * (kotlin.math.abs(nx).pow(exponent)) * maxSpeedPxPerSec
+                val speedY = if (ny == 0f) 0f else (if (ny >= 0) 1f else -1f) * (kotlin.math.abs(ny).pow(exponent)) * maxSpeedPxPerSec
+
+                scroller.velocityX = speedX
+                scroller.velocityY = speedY
+
+                if (speedX == 0f && speedY == 0f) {
+                    // isterseniz scroller.stop() yapabilirsiniz
+                } else {
+                    scroller.startIfNeeded()
+                }
+            }
+        }
+
+        // Touching akışını dinleyip bırakıldığında sıfırlama
+        serviceScope.launch {
+            GlobalCursorState.touching.collectLatest { touching ->
+                if (!touching) {
+                    // bırakınca scroller yumuşakça sönümlensin
+                    scroller.velocityX = 0f
+                    scroller.velocityY = 0f
+                }
+            }
+        }
     }
 
     // ----------------------------------------------------------------
