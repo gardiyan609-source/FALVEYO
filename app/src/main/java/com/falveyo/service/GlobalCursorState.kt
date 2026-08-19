@@ -14,6 +14,14 @@ enum class EdgeScrollDirection(val title: String) {
     RIGHT("Sağa Kaydırma")
 }
 
+enum class ButtonActionType(val label: String) {
+    NONE("Boşta"),
+    SHORT_CLICK("Tek Tık"),
+    LONG_PRESS("Uzun Basış"),
+    BACK("Geri"),
+    HOME("Ana Ekran")
+}
+
 data class ScannedBleDevice(
     val name: String,
     val address: String,
@@ -23,6 +31,17 @@ data class ScannedBleDevice(
 )
 
 object GlobalCursorState {
+
+    private val _lastButtonEvent = MutableStateFlow(ButtonActionType.NONE)
+    val lastButtonEvent: StateFlow<ButtonActionType> = _lastButtonEvent.asStateFlow()
+
+    private val _buttonEventTimestamp = MutableStateFlow(0L)
+    val buttonEventTimestamp: StateFlow<Long> = _buttonEventTimestamp.asStateFlow()
+
+    fun recordButtonEvent(action: ButtonActionType) {
+        _lastButtonEvent.value = action
+        _buttonEventTimestamp.value = System.currentTimeMillis()
+    }
 
     private val _position = MutableStateFlow(PointF(540f, 960f))
     val position: StateFlow<PointF> = _position.asStateFlow()
@@ -48,6 +67,9 @@ object GlobalCursorState {
     private val _serviceRunning = MutableStateFlow(false)
     val serviceRunning: StateFlow<Boolean> = _serviceRunning.asStateFlow()
 
+    private val _accessibilityActive = MutableStateFlow(false)
+    val accessibilityActive: StateFlow<Boolean> = _accessibilityActive.asStateFlow()
+
     private val _lastCommand = MutableStateFlow<String?>(null)
     val lastCommand: StateFlow<String?> = _lastCommand.asStateFlow()
 
@@ -67,6 +89,8 @@ object GlobalCursorState {
     val selectionStart: StateFlow<PointF?> = _selectionStart.asStateFlow()
 
     fun updatePosition(x: Float, y: Float) {
+        val cur = _position.value
+        if (cur.x == x && cur.y == y) return
         _position.value = PointF(x, y)
     }
 
@@ -80,11 +104,15 @@ object GlobalCursorState {
     }
 
     fun updateJoystickVector(vx: Float, vy: Float) {
+        val cur = _joystickVector.value
+        if (cur.x == vx && cur.y == vy) return
         _joystickVector.value = PointF(vx, vy)
     }
 
     fun setEdgeScrollingDirection(dir: EdgeScrollDirection) {
-        _edgeScrollingDirection.value = dir
+        if (_edgeScrollingDirection.value != dir) {
+            _edgeScrollingDirection.value = dir
+        }
     }
 
     fun setConnected(value: Boolean, deviceName: String? = null, deviceAddress: String? = null) {
@@ -101,7 +129,9 @@ object GlobalCursorState {
     }
 
     fun setTouching(value: Boolean) {
-        _touching.value = value
+        if (_touching.value != value) {
+            _touching.value = value
+        }
     }
 
     fun setIsScanning(value: Boolean) {
@@ -118,10 +148,16 @@ object GlobalCursorState {
     }
 
     fun addOrUpdateDevice(device: BluetoothDevice, rssi: Int, scanRecordName: String? = null) {
-        val currentList = _scannedDevices.value.toMutableList()
+        val currentList = _scannedDevices.value
         val name = scanRecordName?.takeIf { it.isNotBlank() }
             ?: (try { device.name } catch (_: SecurityException) { null })?.takeIf { it.isNotBlank() }
             ?: "Bilinmeyen Cihaz (${device.address.takeLast(5)})"
+
+        val existing = currentList.find { it.address == device.address }
+        // Cihaz zaten listede varsa ve RSSI değişimi 4 dBm'den azsa UI recomposition tetikleme
+        if (existing != null && existing.name == name && kotlin.math.abs(existing.rssi - rssi) < 4) {
+            return
+        }
 
         val isFalveyoOrEsp = name.contains("falveyo", ignoreCase = true) ||
                 name.contains("vocativa", ignoreCase = true) ||
@@ -130,7 +166,6 @@ object GlobalCursorState {
                 name.contains("cursor", ignoreCase = true) ||
                 name.contains("joystick", ignoreCase = true)
 
-        val existingIndex = currentList.indexOfFirst { it.address == device.address }
         val item = ScannedBleDevice(
             name = name,
             address = device.address,
@@ -139,27 +174,47 @@ object GlobalCursorState {
             isFalveyoOrEsp = isFalveyoOrEsp
         )
 
+        val newList = currentList.toMutableList()
+        val existingIndex = newList.indexOfFirst { it.address == device.address }
         if (existingIndex >= 0) {
-            currentList[existingIndex] = item
+            newList[existingIndex] = item
         } else {
-            currentList.add(item)
+            newList.add(item)
         }
 
         // Sort Falveyo/ESP32 devices on top, then by strongest RSSI
-        currentList.sortWith(
+        newList.sortWith(
             compareByDescending<ScannedBleDevice> { it.isFalveyoOrEsp }
                 .thenByDescending { it.rssi }
         )
 
-        _scannedDevices.value = currentList
+        _scannedDevices.value = newList
     }
 
     fun setServiceRunning(running: Boolean) {
-        _serviceRunning.value = running
+        if (_serviceRunning.value != running) {
+            _serviceRunning.value = running
+        }
+    }
+
+    fun setAccessibilityActive(active: Boolean) {
+        if (_accessibilityActive.value != active) {
+            _accessibilityActive.value = active
+        }
     }
 
     fun setLastCommand(command: String) {
-        _lastCommand.value = command
+        // Joystick hareket logları UI'ı sürekli yeniden çizdirip kasılmaya yol açtığı için filtrelenir
+        val isJoystickMove = command.startsWith("JOYSTICK:", ignoreCase = true) ||
+                command.startsWith("JOY:", ignoreCase = true) ||
+                command.startsWith("J:", ignoreCase = true) ||
+                command == "TOUCH_MOVE" || command == "JOY_MOVE"
+
+        if (isJoystickMove) return
+
+        if (_lastCommand.value != command) {
+            _lastCommand.value = command
+        }
     }
 
     fun setStatusLog(status: String) {

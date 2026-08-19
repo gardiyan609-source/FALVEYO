@@ -3,42 +3,64 @@ package com.falveyo.service
 import android.content.Context
 import android.graphics.*
 import android.os.Build
+import android.os.SystemClock
+import android.util.Log
 import android.view.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
 
-class CursorOverlayService(private val context: Context) {
+private const val TAG = "CursorOverlay"
+
+class CursorOverlayService(
+    private val context: Context,
+    val isAccessibility: Boolean = false
+) {
+
+    companion object {
+        @Volatile
+        var activeInstance: CursorOverlayService? = null
+            private set
+    }
 
     private var windowManager: WindowManager? = null
     private var cursorView: CursorView? = null
-    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private val scope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
 
-    private var autoHideJob: Job? = null
+    @Volatile
+    private var lastActivityTime = SystemClock.uptimeMillis()
     private val AUTO_HIDE_DELAY_MS = 20_000L // 20 saniye hareketsizlikte gizle
 
     fun notifyUserActivity() {
+        lastActivityTime = SystemClock.uptimeMillis()
         cursorView?.setInactivityHidden(false)
-        resetAutoHideTimer()
-    }
-
-    private fun resetAutoHideTimer() {
-        autoHideJob?.cancel()
-        autoHideJob = scope.launch {
-            delay(AUTO_HIDE_DELAY_MS)
-            cursorView?.setInactivityHidden(true)
-        }
     }
 
     fun start() {
+        // Eğer zaten bir accessibility overlay çalışıyorsa ve bu normal overlay ise, çift çizim yapma
+        if (!isAccessibility && activeInstance?.isAccessibility == true) {
+            Log.d(TAG, "Accessibility overlay zaten aktif, normal overlay başlatılmadı.")
+            return
+        }
+
+        // Eğer mevcut bir overlay varsa ve biz accessibility başlatıyorsak eskisini durdur
+        activeInstance?.let { existing ->
+            if (existing != this) {
+                existing.stop()
+            }
+        }
+
         try {
             windowManager = context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
             cursorView = CursorView(context)
 
-            val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+            val type = if (isAccessibility) {
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            else
+            } else {
                 @Suppress("DEPRECATION")
                 WindowManager.LayoutParams.TYPE_SYSTEM_OVERLAY
+            }
 
             val params = WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
@@ -47,20 +69,33 @@ class CursorOverlayService(private val context: Context) {
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
                 PixelFormat.TRANSLUCENT
             )
 
             windowManager?.addView(cursorView, params)
-            resetAutoHideTimer()
+            activeInstance = this
+            notifyUserActivity()
+            Log.d(TAG, "Overlay GPU hızlandırmalı başlatıldı. Tür: ${if (isAccessibility) "TYPE_ACCESSIBILITY_OVERLAY" else "TYPE_APPLICATION_OVERLAY"}")
         } catch (e: Exception) {
-            android.util.Log.e("CursorOverlayService", "Overlay eklenemedi (İzin gerekebilir): ${e.message}")
+            Log.e(TAG, "Overlay eklenemedi: ${e.message}")
+        }
+
+        // Hareketsizlik denetleyicisi (Her frame job oluşturmak yerine saniyede bir kontrol)
+        scope.launch {
+            while (isActive) {
+                delay(2000L)
+                if (SystemClock.uptimeMillis() - lastActivityTime > AUTO_HIDE_DELAY_MS) {
+                    cursorView?.setInactivityHidden(true)
+                }
+            }
         }
 
         scope.launch {
             GlobalCursorState.position.collectLatest { point ->
                 cursorView?.updatePosition(point.x, point.y)
-                notifyUserActivity()
+                lastActivityTime = SystemClock.uptimeMillis()
             }
         }
 
@@ -99,11 +134,19 @@ class CursorOverlayService(private val context: Context) {
     }
 
     fun stop() {
-        autoHideJob?.cancel()
         scope.cancel()
-        cursorView?.let { windowManager?.removeView(it) }
+        cursorView?.let {
+            try {
+                windowManager?.removeView(it)
+            } catch (e: Exception) {
+                Log.e(TAG, "removeView hatası: ${e.message}")
+            }
+        }
         cursorView = null
         windowManager = null
+        if (activeInstance == this) {
+            activeInstance = null
+        }
     }
 }
 
@@ -134,9 +177,15 @@ class CursorView(context: Context) : View(context) {
     }
 
     private val touchRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(200, 255, 64, 129)
+        color = Color.argb(225, 0, 229, 255)
         style = Paint.Style.STROKE
-        strokeWidth = 4f
+        strokeWidth = 5f
+    }
+
+    private val touchOuterGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(110, 0, 229, 255)
+        style = Paint.Style.STROKE
+        strokeWidth = 3f
     }
 
     private val edgeGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -154,12 +203,17 @@ class CursorView(context: Context) : View(context) {
     fun updatePosition(x: Float, y: Float) {
         cx = x
         cy = y
+        if (isHiddenByInactivity) {
+            isHiddenByInactivity = false
+        }
         postInvalidateOnAnimation()
     }
 
     fun setVisible(v: Boolean) {
-        visible = v
-        postInvalidate()
+        if (visible != v) {
+            visible = v
+            postInvalidate()
+        }
     }
 
     fun setInactivityHidden(hidden: Boolean) {
@@ -170,13 +224,17 @@ class CursorView(context: Context) : View(context) {
     }
 
     fun setTouching(touching: Boolean) {
-        isTouching = touching
-        postInvalidate()
+        if (isTouching != touching) {
+            isTouching = touching
+            postInvalidate()
+        }
     }
 
     fun setRadius(r: Float) {
-        radius = r
-        postInvalidate()
+        if (radius != r) {
+            radius = r
+            postInvalidate()
+        }
     }
 
     fun setCursorColor(colorInt: Int) {
@@ -185,12 +243,16 @@ class CursorView(context: Context) : View(context) {
         val b = Color.blue(colorInt)
         fillPaint.color = Color.argb(170, r, g, b)
         edgeGlowPaint.color = Color.argb(190, r, g, b)
+        touchRingPaint.color = Color.argb(225, r, g, b)
+        touchOuterGlowPaint.color = Color.argb(110, r, g, b)
         postInvalidate()
     }
 
     fun setEdgeScrollDirection(dir: EdgeScrollDirection) {
-        edgeDirection = dir
-        postInvalidate()
+        if (edgeDirection != dir) {
+            edgeDirection = dir
+            postInvalidate()
+        }
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -244,14 +306,16 @@ class CursorView(context: Context) : View(context) {
         }
 
         // 2. İMLEÇ VE DOKUNMA/BASILI TUTMA ÇİZİMİ
-        val currentR = if (isTouching) radius * 1.30f else radius
+        val currentR = if (isTouching) radius * 1.35f else radius
+
+        // Dokunma / Basılı Tutma / Metin Seçme durumunda belirgin parlayan dış halka
+        if (isTouching) {
+            canvas.drawCircle(cx, cy, currentR + 8f, touchRingPaint)
+            canvas.drawCircle(cx, cy, currentR + 16f, touchOuterGlowPaint)
+        }
 
         canvas.drawCircle(cx, cy, currentR, fillPaint)
         canvas.drawCircle(cx, cy, currentR, borderPaint)
-        canvas.drawCircle(cx, cy, 3f, centerDotPaint)
-
-        if (isTouching) {
-            canvas.drawCircle(cx, cy, currentR + 7f, touchRingPaint)
-        }
+        canvas.drawCircle(cx, cy, 3.5f, centerDotPaint)
     }
 }

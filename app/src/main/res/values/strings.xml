@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">FALVEYO</string>
+    <string name="accessibility_service_label">FALVEYO İmleç ve Sistem Katmanı</string>
+    <string name="accessibility_service_description">FALVEYO sanal fare imlecinin bildirim paneli, kilit ekranı ve tüm sistem pencerelerinin üzerinde kesintisiz görünmesini sağlar.</string>
 </resources>

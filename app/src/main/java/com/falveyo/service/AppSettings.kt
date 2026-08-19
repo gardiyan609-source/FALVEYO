@@ -30,14 +30,15 @@ object AppSettings {
     private const val KEY_EDGE_SCROLL_DELAY_MS = "edge_scroll_delay_ms"
     private const val KEY_EDGE_SCROLL_SPEED = "edge_scroll_speed"
     private const val KEY_EDGE_SCROLL_MARGIN = "edge_scroll_margin"
+    private const val KEY_DARK_MODE = "dark_mode"
 
     // Varsayılan Değerler
-    const val DEFAULT_SPEED = 15f
+    const val DEFAULT_SPEED = 6f
     const val DEFAULT_SENSITIVITY = 1.4f // 1.0 (Lineer) ile 2.0 (Karesel) arası eğri
     const val DEFAULT_DEADZONE = 0.03f // %3 ölü bölge (mikro hareketleri kaçırmaz)
     const val DEFAULT_SMOOTHING_ENABLED = true
     const val DEFAULT_SMOOTHING_FACTOR = 0.45f // Düşük geçiren filtre katsayısı
-    const val DEFAULT_LONG_PRESS_MS = 1500L // 1.5 saniye (Metin / Alan seçimi ve uzun basış bekleme süresi)
+    const val DEFAULT_LONG_PRESS_MS = 450L // 450ms (Android standart metin ve alan seçimi uzun basış süresi)
     const val DEFAULT_CURSOR_RADIUS = 18f
     const val DEFAULT_CURSOR_COLOR = 0xFF00E5FF.toInt()
 
@@ -45,8 +46,12 @@ object AppSettings {
     const val DEFAULT_EDGE_SCROLL_DELAY_MS = 600L
     const val DEFAULT_EDGE_SCROLL_SPEED = 1.0f
     const val DEFAULT_EDGE_SCROLL_MARGIN = 40f // px
+    const val DEFAULT_DARK_MODE = true
 
     private var prefs: SharedPreferences? = null
+
+    private val _isDarkMode = MutableStateFlow(DEFAULT_DARK_MODE)
+    val isDarkMode: StateFlow<Boolean> = _isDarkMode.asStateFlow()
 
     private val _cursorSpeed = MutableStateFlow(DEFAULT_SPEED)
     val cursorSpeed: StateFlow<Float> = _cursorSpeed.asStateFlow()
@@ -118,6 +123,16 @@ object AppSettings {
         _edgeScrollDelayMs.value = p.getLong(KEY_EDGE_SCROLL_DELAY_MS, DEFAULT_EDGE_SCROLL_DELAY_MS)
         _edgeScrollSpeed.value = p.getFloat(KEY_EDGE_SCROLL_SPEED, DEFAULT_EDGE_SCROLL_SPEED)
         _edgeScrollMargin.value = p.getFloat(KEY_EDGE_SCROLL_MARGIN, DEFAULT_EDGE_SCROLL_MARGIN)
+        _isDarkMode.value = p.getBoolean(KEY_DARK_MODE, DEFAULT_DARK_MODE)
+    }
+
+    fun setDarkMode(darkMode: Boolean) {
+        _isDarkMode.value = darkMode
+        prefs?.edit()?.putBoolean(KEY_DARK_MODE, darkMode)?.apply()
+    }
+
+    fun toggleDarkMode() {
+        setDarkMode(!_isDarkMode.value)
     }
 
     fun setCursorSpeed(speed: Float) {

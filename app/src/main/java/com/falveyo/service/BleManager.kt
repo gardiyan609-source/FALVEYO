@@ -58,17 +58,26 @@ class BleManager(
     }
 
     // ----------------------------------------------------------------
-    // 60 FPS PÜRÜZSÜZ İMLEÇ MOTORU (Physics & Interpolation Loop)
+    // 120 FPS PÜRÜZSÜZ İMLEÇ MOTORU (Physics & Interpolation Loop)
     // ----------------------------------------------------------------
 
     private fun startPhysicsLoop() {
         scope.launch {
-            val frameTimeMs = 16L // ~60 FPS
+            val frameTimeMs = 8L // ~120 FPS ultra akıcı imleç ve sürükleme
             while (isActive) {
+                if (!GlobalCursorState.connected.value) {
+                    currentVx = 0f
+                    currentVy = 0f
+                    targetVx = 0f
+                    targetVy = 0f
+                    GlobalCursorState.updateJoystickVector(0f, 0f)
+                    delay(200L)
+                    continue
+                }
+
                 val now = System.currentTimeMillis()
                 val isRecent = (now - lastJoystickPacketTime) < 100L
 
-                val speedSetting = AppSettings.cursorSpeed.value
                 val smoothingEnabled = AppSettings.smoothingEnabled.value
                 val smoothingFactor = AppSettings.smoothingFactor.value.coerceIn(0.1f, 0.95f)
 
@@ -78,10 +87,12 @@ class BleManager(
                     currentVx = 0f
                     currentVy = 0f
                     GlobalCursorState.updateJoystickVector(0f, 0f)
-                } else if (targetVx == 0f && targetVy == 0f) {
-                    currentVx = 0f
-                    currentVy = 0f
+                    delay(60L)
+                    continue
+                } else if (targetVx == 0f && targetVy == 0f && currentVx == 0f && currentVy == 0f) {
                     GlobalCursorState.updateJoystickVector(0f, 0f)
+                    delay(60L)
+                    continue
                 } else if (smoothingEnabled) {
                     // Düşük geçiren Exponential Moving Average filtresi
                     currentVx += (targetVx - currentVx) * smoothingFactor
@@ -447,13 +458,15 @@ class BleManager(
     }
 
     private var lastSwState = 0
+    private var lastSwChangeTime = 0L
     private var lastBtn1State = 0
+    private var lastBtn1ChangeTime = 0L
     private var lastBtn2State = 0
+    private var lastBtn2ChangeTime = 0L
     private var lastBtn3State = 0
+    private var lastBtn3ChangeTime = 0L
 
     private fun processSingleCommand(msg: String) {
-        GlobalCursorState.setLastCommand(msg)
-
         val isJoy = msg.startsWith("JOYSTICK:", ignoreCase = true) ||
                 msg.startsWith("JOY:", ignoreCase = true) ||
                 msg.startsWith("J:", ignoreCase = true)
@@ -501,27 +514,40 @@ class BleManager(
                 // Gömülü tuş durumları kontrolü (örn: JOYSTICK:x,y,sw veya JOYSTICK:x,y,sw,up,down,home)
                 if (parts.size >= 3) {
                     val sw = parts[2].toIntOrNull() ?: 0
-                    if (sw == 1 && lastSwState == 0) {
-                        onCommand("TOUCH_DOWN")
-                    } else if (sw == 0 && lastSwState == 1) {
-                        onCommand("TOUCH_UP")
+                    val now = System.currentTimeMillis()
+                    if (sw != lastSwState && (now - lastSwChangeTime >= 30L)) {
+                        lastSwChangeTime = now
+                        lastSwState = sw
+                        if (sw == 1) {
+                            onCommand("TOUCH_DOWN")
+                        } else {
+                            onCommand("TOUCH_UP")
+                        }
                     }
-                    lastSwState = sw
 
                     if (parts.size >= 4) {
                         val up = parts[3].toIntOrNull() ?: 0
-                        if (up == 1 && lastBtn1State == 0) onCommand("UP")
-                        lastBtn1State = up
+                        if (up != lastBtn1State && (now - lastBtn1ChangeTime >= 150L)) {
+                            lastBtn1ChangeTime = now
+                            lastBtn1State = up
+                            if (up == 1) onCommand("UP")
+                        }
                     }
                     if (parts.size >= 5) {
                         val down = parts[4].toIntOrNull() ?: 0
-                        if (down == 1 && lastBtn2State == 0) onCommand("DOWN")
-                        lastBtn2State = down
+                        if (down != lastBtn2State && (now - lastBtn2ChangeTime >= 150L)) {
+                            lastBtn2ChangeTime = now
+                            lastBtn2State = down
+                            if (down == 1) onCommand("DOWN")
+                        }
                     }
                     if (parts.size >= 6) {
                         val home = parts[5].toIntOrNull() ?: 0
-                        if (home == 1 && lastBtn3State == 0) onCommand("HOME")
-                        lastBtn3State = home
+                        if (home != lastBtn3State && (now - lastBtn3ChangeTime >= 150L)) {
+                            lastBtn3ChangeTime = now
+                            lastBtn3State = home
+                            if (home == 1) onCommand("HOME")
+                        }
                     }
                 }
             }

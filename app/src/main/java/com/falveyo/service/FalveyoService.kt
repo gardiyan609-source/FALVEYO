@@ -43,8 +43,10 @@ class FalveyoService : Service() {
 
     private var touchDownTime = 0L
     private var isTouchDown = false
+    private var lastTouchUpTime = 0L
     private var touchStartX = 0f
     private var touchStartY = 0f
+    private var periodicButtonHoldJob: Job? = null
 
     private var screenWidth = 1080
     private var screenHeight = 2400
@@ -135,7 +137,7 @@ class FalveyoService : Service() {
                     if (activeEdgeDirection != EdgeScrollDirection.NONE) {
                         stopEdgeScroll()
                     }
-                    delay(40L)
+                    delay(300L)
                     continue
                 }
 
@@ -169,7 +171,7 @@ class FalveyoService : Service() {
                     if (activeEdgeDirection != EdgeScrollDirection.NONE) {
                         stopEdgeScroll()
                     }
-                    delay(30L)
+                    delay(100L)
                     continue
                 }
 
@@ -281,11 +283,11 @@ class FalveyoService : Service() {
 
         var normalized = raw.uppercase()
 
-        // 1. Doğrudan Basılı Tutma (DOWN / PRESS) Olayları
+        // 1. Doğrudan Basılı Tutma (DOWN / PRESS / HOLD) Olayları -> Bırakılana kadar sınırsız basılı tutar
         val isPressEvent = when {
-            normalized in listOf("TOUCH_DOWN", "JOY_DOWN", "JOYSTICK_DOWN", "SW_DOWN", "SELECT_DOWN", "PRESS_DOWN", "BTN_DOWN", "MOUSE_DOWN", "SW:1", "SELECT:1", "BTN:1", "CLICK:1", "TOUCH:1", "BTN_SW:1", "JOY_SW:1", "BUTTON:1") -> true
+            normalized in listOf("TOUCH_DOWN", "JOY_DOWN", "JOYSTICK_DOWN", "SW_DOWN", "SELECT_DOWN", "PRESS_DOWN", "BTN_DOWN", "MOUSE_DOWN", "SW:1", "SELECT:1", "BTN:1", "CLICK:1", "TOUCH:1", "BTN_SW:1", "JOY_SW:1", "BUTTON:1", "HOLD", "LONG_PRESS", "LONGCLICK", "SW_LONG", "SELECT_LONG", "BTN_LONG") -> true
             normalized.endsWith(":1") || normalized.endsWith(":DOWN") || normalized.endsWith(":PRESS") || normalized.endsWith("_DOWN") || normalized.endsWith("_PRESS") -> {
-                normalized.contains("SW") || normalized.contains("SELECT") || normalized.contains("BTN") || normalized.contains("TOUCH") || normalized.contains("CLICK") || normalized.contains("BUTTON")
+                normalized.contains("SW") || normalized.contains("SELECT") || normalized.contains("BTN") || normalized.contains("TOUCH") || normalized.contains("CLICK") || normalized.contains("BUTTON") || normalized.contains("HOLD")
             }
             else -> false
         }
@@ -297,9 +299,9 @@ class FalveyoService : Service() {
 
         // 2. Doğrudan Bırakma (UP / RELEASE) Olayları -> Seçimi Tamamla
         val isReleaseEvent = when {
-            normalized in listOf("TOUCH_UP", "JOY_UP", "JOYSTICK_UP", "SW_UP", "SELECT_UP", "PRESS_UP", "BTN_UP", "MOUSE_UP", "SW:0", "SELECT:0", "BTN:0", "CLICK:0", "TOUCH:0", "BTN_SW:0", "JOY_SW:0", "BUTTON:0") -> true
+            normalized in listOf("TOUCH_UP", "JOY_UP", "JOYSTICK_UP", "SW_UP", "SELECT_UP", "PRESS_UP", "BTN_UP", "MOUSE_UP", "SW:0", "SELECT:0", "BTN:0", "CLICK:0", "TOUCH:0", "BTN_SW:0", "JOY_SW:0", "BUTTON:0", "RELEASE", "UNHOLD", "HOLD_UP") -> true
             normalized.endsWith(":0") || normalized.endsWith(":UP") || normalized.endsWith(":RELEASE") || normalized.endsWith("_UP") || normalized.endsWith("_RELEASE") -> {
-                normalized.contains("SW") || normalized.contains("SELECT") || normalized.contains("BTN") || normalized.contains("TOUCH") || normalized.contains("CLICK") || normalized.contains("BUTTON")
+                normalized.contains("SW") || normalized.contains("SELECT") || normalized.contains("BTN") || normalized.contains("TOUCH") || normalized.contains("CLICK") || normalized.contains("BUTTON") || normalized.contains("HOLD")
             }
             else -> false
         }
@@ -357,14 +359,27 @@ class FalveyoService : Service() {
             "DOWN", "KEY_DOWN", "DPAD_DOWN", "ARROW_DOWN", "DOWN_BUTTON", "BTN2", "BUTTON2", "B2", "D", "20", "BACK", "KEY_BACK", "BACK_BUTTON", "ESC", "ESCAPE", "4" -> {
                 stopEdgeScroll()
                 InputExecutor.back()
+                GlobalCursorState.recordButtonEvent(ButtonActionType.BACK)
                 GlobalCursorState.setStatusLog("Geri (BACK) basıldı")
             }
 
-            // SELECT / TIKLAMA TUŞU
+            // SELECT / TIKLAMA TUŞU (Tekli veya basılı tutulduğunda sürekli gelen paketler)
             "SELECT", "CLICK", "OK", "ENTER", "TAP", "PRESS", "KEY_ENTER", "KEY_SELECT", "23", "66" -> {
+                handlePeriodicOrContinuousButtonPress()
+            }
+
+            // DİREKT UZUN BASIŞ / METİN SEÇİMİ SİNYALİ
+            "LONG_PRESS", "LONGCLICK", "HOLD", "SW_LONG", "SELECT_LONG", "BTN_LONG" -> {
                 stopEdgeScroll()
-                InputExecutor.tap(pos.x, pos.y)
-                GlobalCursorState.setStatusLog("SELECT basıldı")
+                val longMs = AppSettings.longPressMs.value.toLong()
+                GlobalCursorState.setTouching(true)
+                GlobalCursorState.recordButtonEvent(ButtonActionType.LONG_PRESS)
+                InputExecutor.longPress(pos.x, pos.y, longMs)
+                serviceScope.launch {
+                    delay(longMs + 100L)
+                    GlobalCursorState.setTouching(false)
+                }
+                GlobalCursorState.setStatusLog("Uzun basış (Metin seçimi) gerçekleştirildi")
             }
 
             // JOYSTICK DOKUNMA / TUTMA HAREKETLERİ
@@ -396,17 +411,48 @@ class FalveyoService : Service() {
     // JOYSTICK BASMA / BASILI TUTMA / METİN SEÇME (GERÇEK İNSAN PARMAĞI GİBİ)
     // ----------------------------------------------------------------
 
-    fun onJoystickPress() {
+    private fun handlePeriodicOrContinuousButtonPress() {
         stopEdgeScroll()
-        touchDownTime = System.currentTimeMillis()
+        val now = System.currentTimeMillis()
+
+        if (!isTouchDown) {
+            touchDownTime = now
+            isTouchDown = true
+            val pos = GlobalCursorState.position.value
+            touchStartX = pos.x
+            touchStartY = pos.y
+            GlobalCursorState.setTouching(true)
+            InputExecutor.touchDown(pos.x, pos.y)
+            Log.d(TAG, "DOKUNMA (Sürekli/Periyodik DOWN) BAŞLADI @ ${pos.x.toInt()}, ${pos.y.toInt()}")
+        }
+
+        // Watchdog: Kullanıcı basılı tuttuğu sürece ESP32 periyodik SELECT gönderebilir.
+        // Eğer 280ms boyunca yeni bir SELECT/PRESS gelmezse, kullanıcı butonu bırakmış demektir (touchUp).
+        periodicButtonHoldJob?.cancel()
+        periodicButtonHoldJob = serviceScope.launch {
+            delay(280L)
+            if (isTouchDown) {
+                onJoystickRelease()
+            }
+        }
+    }
+
+    fun onJoystickPress() {
+        periodicButtonHoldJob?.cancel()
+        periodicButtonHoldJob = null
+
+        val now = System.currentTimeMillis()
+        if (isTouchDown || (now - lastTouchUpTime < 30L)) {
+            return
+        }
+        stopEdgeScroll()
+        touchDownTime = now
         isTouchDown = true
         val pos = GlobalCursorState.position.value
         touchStartX = pos.x
         touchStartY = pos.y
 
         GlobalCursorState.setTouching(true)
-        // Gerçek insan parmağı gibi ekranda doğrudan donanımsal dokunmayı (ACTION_DOWN) başlatır
-        // Bu sayede metne basılı tutulduğunda Android'in kendi metin seçme motoru kelimeyi anında seçer
         InputExecutor.touchDown(pos.x, pos.y)
         Log.d(TAG, "DOKUNMA (TOUCH DOWN) BAŞLADI @ ${pos.x.toInt()}, ${pos.y.toInt()}")
     }
@@ -418,20 +464,28 @@ class FalveyoService : Service() {
     }
 
     fun onJoystickRelease() {
+        periodicButtonHoldJob?.cancel()
+        periodicButtonHoldJob = null
+
         val pos = GlobalCursorState.position.value
-        val held = System.currentTimeMillis() - touchDownTime
+        val now = System.currentTimeMillis()
+        val held = now - touchDownTime
 
         GlobalCursorState.setTouching(false)
 
         if (isTouchDown) {
-            // Gerçek insan parmağı ekrandan kalkmış gibi dokunmayı (ACTION_UP) sonlandırır
             InputExecutor.touchUp(pos.x, pos.y)
+            lastTouchUpTime = now
             Log.d(TAG, "DOKUNMA (TOUCH UP) TAMAMLANDI (${held}ms)")
-            if (held >= 400L) {
-                GlobalCursorState.setStatusLog("Metin seçildi / Basılı tutuldu ($held ms)")
+            if (held >= 350L) {
+                GlobalCursorState.recordButtonEvent(ButtonActionType.LONG_PRESS)
+                GlobalCursorState.setStatusLog("Metin seçildi / Uzun basıldı ($held ms)")
             } else {
+                GlobalCursorState.recordButtonEvent(ButtonActionType.SHORT_CLICK)
                 GlobalCursorState.setStatusLog("Tıklandı")
             }
+        } else {
+            lastTouchUpTime = now
         }
 
         isTouchDown = false
